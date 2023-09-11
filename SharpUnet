@@ -1,0 +1,1000 @@
+
+"""
+Created on Thu Sep 15 08:38:13 2022
+
+@author: swavaf
+
+"""
+import os
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import keras
+from keras.optimizers import *
+from keras.layers import * 
+from keras.models import Model
+from keras.callbacks import EarlyStopping, ModelCheckpoint, LearningRateScheduler, ReduceLROnPlateau
+from keras import backend as K
+from tqdm import tqdm
+from sklearn.model_selection import train_test_split
+from tensorflow.python.client import device_lib
+import numpy as np
+import matplotlib.pyplot as plt
+from skimage import morphology, feature, measure, exposure, filters, color
+from scipy import ndimage as ndi
+from skimage.feature import peak_local_max
+from skimage import data, img_as_float
+from scipy.ndimage.measurements import center_of_mass, label
+import imageio as imageio
+
+from PIL import Image
+import numpy as np
+import matplotlib.pyplot as plt
+from skimage.filters import threshold_otsu
+from skimage import morphology, feature, measure, exposure, filters, color
+from scipy import ndimage as ndi
+from skimage.feature import peak_local_max
+from skimage import data, img_as_float
+from scipy.ndimage.measurements import center_of_mass, label
+import cv2
+import imageio as imageio
+import plotly.graph_objects as go
+import pandas as pd
+from numpy import asarray 
+from focal_loss import BinaryFocalLoss
+
+np.set_printoptions(suppress=True)
+
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
+
+print(device_lib.list_local_devices())
+
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+
+BLUE = '#00b8e6'
+DARKBLUE = '#00343f'
+RED = '#ff5983'
+DARKRED = '#7a023c'
+YELLOW = '#ffe957'
+DARKYELLOW = '#f29f3f'
+GREEN = '#61ff69'
+DARKGREEN = '#0b6e48'
+GRAY = '#cccccc'
+
+# Loading the Images
+#%%
+
+img_files = next(os.walk(r'/projects/BRAIN_TUMER_SEGMENTATION/TCGA/data/Images'))[2]
+msk_files = next(os.walk(r'/projects/BRAIN_TUMER_SEGMENTATION/TCGA/msk/Masks'))[2]
+
+
+img_files.sort()
+msk_files.sort()
+
+print(len(img_files))
+print(len(msk_files))
+
+X = []
+Y = []
+
+mergeitem = 0			 
+
+
+
+PATH = os.getcwd()
+data_path = r'/projects/BRAIN_TUMER_SEGMENTATION/TCGA/data'
+data_dir_list = os.listdir(data_path)
+
+
+for dataset in data_dir_list:
+    img_list=os.listdir(data_path+'/'+ dataset)
+    print ('Loaded the images of dataset-'+'{}\n'.format(dataset))
+    for img in img_list:
+        input_img=cv2.imread(data_path + '/'+ dataset + '/'+ img )
+        input_img=cv2.cvtColor(input_img, cv2.COLOR_BGR2GRAY)
+        input_img_resize=cv2.resize(input_img,(400, 400))
+        X.append(input_img_resize)
+       
+PATH = os.getcwd()
+# Define data path
+data_path1 =  r'/projects/BRAIN_TUMER_SEGMENTATION/TCGA/msk'
+data_dir_list = os.listdir(data_path1)
+
+
+for dataset in data_dir_list:
+    img_list1=os.listdir(data_path1+'/'+ dataset)
+    print ('Loaded the images of dataset-'+'{}\n'.format(dataset))
+    for img in img_list1:
+        input_img1=cv2.imread(data_path1+ '/'+ dataset + '/'+ img )
+        input_img1=cv2.cvtColor(input_img1, cv2.COLOR_BGR2GRAY)
+        input_img_resize1=cv2.resize(input_img1,(400, 400))
+        Y.append(input_img_resize1)
+       
+		
+
+		
+print(len(X))
+print(len(Y))
+
+
+X = np.array(X)
+Y = np.array(Y)
+
+
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=0)
+
+# print(X_train)
+# print(X_test)
+
+print(Y_train.shape[0])
+print(Y_train.shape[1])
+print(Y_train.shape[2])
+
+
+X_train = X_train.reshape((X_train.shape[0],X_train.shape[1],X_train.shape[2],1))
+X_test = X_test.reshape((X_test.shape[0],X_test.shape[1],X_test.shape[2],1))
+
+
+Y_train = Y_train.reshape((Y_train.shape[0],Y_train.shape[1],Y_train.shape[2],1))
+Y_test = Y_test.reshape((Y_test.shape[0],Y_test.shape[1],Y_test.shape[2],1))
+
+
+
+X_train = X_train / 255
+X_test = X_test / 255
+Y_train = Y_train / 255
+Y_test = Y_test / 255
+
+
+Y_train = np.round(Y_train)
+Y_test = np.round(Y_test)
+
+							  
+							
+
+print(X_train.shape)
+print(Y_train.shape)
+print(X_test.shape)
+print(Y_test.shape)
+
+
+#%%
+
+def get_kernel():
+   
+    """
+    See https://setosa.io/ev/image-kernels/
+    """
+
+
+    k1 = np.array([[0.0625, 0.125, 0.0625],
+                   [0.125,  0.25, 0.125],
+                   [0.0625, 0.125, 0.0625]])
+   
+    # Sharpening Spatial Kernel, used in paper
+    k2 = np.array([[-1, -1, -1],
+                   [-1,  8, -1],
+                   [-1, -1, -1]])
+   
+    k3 = np.array([[0, -1, 0],
+                   [-1,  5, -1],
+                   [0, -1, 0]])
+   
+    return k1, k2, k3
+
+								   
+						  
+							   
+				   
+								 
+			
+
+			 
+																				  
+					
+																				   
+	
+			   
+
+def build_sharp_blocks(layer):
+    """
+    Sharp Blocks
+    """
+    # Get number of channels in the feature
+    in_channels = layer.shape[-1]
+    # Get kernel
+    _, w, _ = get_kernel()    
+    # Change dimension
+    w = np.expand_dims(w, axis=-1)
+    # Repeat filter by in_channels times to get (H, W, in_channels)
+    w = np.repeat(w, in_channels, axis=-1)
+    # Expand dimension
+    w = np.expand_dims(w, axis=-1)
+    return w
+
+			 
+																	
+																				
+																									   
+	
+		 
+																							 
+																			   
+	
+									
+				 
+
+				
+																					
+																								   
+																							   
+
+																							 
+																			   
+	
+								   
+				 
+
+								
+									
+							   
+								 
+			
+
+def SharpUNet(img_size, num_classes):
+    "Unet with sharp Blocks in skip connections"
+							  
+
+    # Kernel size for sharp blocks
+    kernel_size = 3
+
+    print("Input Image Size")
+    print(img_size)
+
+
+    inputs = Input(img_size)
+    conv1 = Conv2D(32, (3, 3), activation='relu', padding='same')(inputs)
+    conv1 = Conv2D(32, (3, 3), activation='relu', padding='same')(conv1)
+    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+
+    conv2 = Conv2D(64, (3, 3), activation='relu', padding='same')(pool1)
+    conv2 = Conv2D(64, (3, 3), activation='relu', padding='same')(conv2)
+    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+
+    conv3 = Conv2D(128, (3, 3), activation='relu', padding='same')(pool2)
+    conv3 = Conv2D(128, (3, 3), activation='relu', padding='same')(conv3)
+    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+											  
+											  
+											  
+											  
+	
+						
+											
+											
+	
+										
+
+    conv4 = Conv2D(256, (3, 3), activation='relu', padding='same')(pool3)
+    conv4 = Conv2D(256, (3, 3), activation='relu', padding='same')(conv4)
+    pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
+
+    conv5 = Conv2D(512, (3, 3), activation='relu', padding='same')(pool4)
+    conv5 = Conv2D(512, (3, 3), activation='relu', padding='same')(conv5)
+   
+    # Skip connection 1
+    # 1. Get sharpening kernel weights(1, H, W, channels)
+    W1 = build_sharp_blocks(conv4)
+    # 2. Build depthwise convolutional layer with random weights
+    sb1 = DepthwiseConv2D(kernel_size, use_bias=False, padding='same')
+    # 3. Pass input to layer
+    conv4 = sb1(conv4)
+    # 4. Set filters as layer weights
+    sb1.set_weights([W1])
+    # 5. Dont update weights
+    sb1.trainable = False
+   
+    up6 = concatenate([Conv2DTranspose(256, (2, 2), strides=(2, 2), padding='same')(conv5), conv4], axis=3)
+    conv6 = Conv2D(256, (3, 3), activation='relu', padding='same')(up6)
+    conv6 = Conv2D(256, (3, 3), activation='relu', padding='same')(conv6)
+   
+																  
+
+    # Skip connection 2
+														  
+    W2 = build_sharp_blocks(conv3)
+																
+    sb2 = DepthwiseConv2D(kernel_size, use_bias=False, padding='same')
+							
+    conv3 = sb2(conv3)
+									  
+    sb2.set_weights([W2])
+							
+    sb2.trainable = False
+   
+    up7 = concatenate([Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same')(conv6), conv3], axis=3)
+    conv7 = Conv2D(128, (3, 3), activation='relu', padding='same')(up7)
+   
+    conv7 = Conv2D(128, (3, 3), activation='relu', padding='same')(conv7)
+
+    # Skip connection 3
+														  
+    W3 = build_sharp_blocks(conv2)
+																
+    sb3 = DepthwiseConv2D(kernel_size, use_bias=False, padding='same')
+							
+    conv2 = sb3(conv2)
+									  
+    sb3.set_weights([W3])
+							
+    sb3.trainable = False
+   
+   
+    up8 = concatenate([Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same')(conv7), conv2], axis=3)
+    conv8 = Conv2D(64, (3, 3), activation='relu', padding='same')(up8)
+    conv8 = Conv2D(64, (3, 3), activation='relu', padding='same')(conv8)
+   
+																  
+   
+    # Skip connection 4
+														  
+    W4 = build_sharp_blocks(conv1)
+																
+    sb4 = DepthwiseConv2D(kernel_size, use_bias=False, padding='same')
+							
+    conv1 = sb4(conv1)
+									  
+    sb4.set_weights([W4])
+							
+    sb4.trainable = False
+   
+
+    up9 = concatenate([Conv2DTranspose(32, (2, 2), strides=(2, 2), padding='same')(conv8), conv1], axis=3)
+    conv9 = Conv2D(32, (3, 3), activation='relu', padding='same')(up9)
+    conv9 = Conv2D(32, (3, 3), activation='relu', padding='same')(conv9)
+
+    # for multi-class segmentation, use the 'softmax' activation
+    # conv10 = Conv2D(3, (1, 1), activation='sigmoid')(conv9)
+    conv10 = Conv2D(num_classes, (1, 1), activation='sigmoid')(conv9)
+
+    model = Model(inputs=[inputs], outputs=[conv10])    
+   
+								  
+    return model
+
+
+smooth = 1
+
+def jacard(y_true, y_pred):
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+    intersection = K.sum ( y_true_f * y_pred_f)
+    union = K.sum ( y_true_f + y_pred_f - y_true_f * y_pred_f)
+    return intersection/union
+
+
+def dice_coef(y_true, y_pred):
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+    intersection = K.sum(y_true_f * y_pred_f)
+    return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+
+def dice_coef_loss(y_true, y_pred):
+    return 1.0 - dice_coef(y_true, y_pred)
+
+def IOU(y_true, y_pred):
+
+    y_true = K.flatten(y_true)
+    y_pred = K.flatten(y_pred)
+
+    thresh = 0.5
+
+    y_true = K.cast(K.greater_equal(y_true, thresh), 'float32')
+    y_pred = K.cast(K.greater_equal(y_pred, thresh), 'float32')
+
+    union = K.sum(K.maximum(y_true, y_pred)) + K.epsilon()
+    intersection = K.sum(K.minimum(y_true, y_pred)) + K.epsilon()
+
+    iou = intersection/union
+
+    return iou
+
+def lr_schedule(epoch):
+
+    lr =0.0035
+    if epoch >150:
+        lr *=2**-1
+    elif epoch >80:
+        lr *=2**(-1)
+    elif epoch >50:
+        lr *=2**(-1)
+    elif epoch >30:
+        lr *=2**(-1)
+   
+    print('Learning rate: ', lr)
+    return lr
+
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.callbacks import LearningRateScheduler
+#from keras.optimizers import SGD
+
+import time
+
+start_time = time.time()
+
+# Prepare callbacks for model saving and for learning rate adjustment.
+lr_scheduler = LearningRateScheduler(lr_schedule)
+
+lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
+                               cooldown=0,
+                               patience=5,
+                               min_lr=0.5e-6)
+
+
+checkpointer = ModelCheckpoint("model.h5", verbose=0, monitor='val_loss', mode='min', save_best_only=True)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=10, verbose=1, min_lr=1e-8, mode='min')
+# early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, verbose=1, patience=10, mode='min', restore_best_weights=True)
+
+#%%
+# Free up RAM in case the model definition cells were run multiple times
+keras.backend.clear_session()
+
+# Build model
+model = None
+model = SharpUNet((400,400,1), 1)
+model.summary()
+
+#from tensorflow.keras.utils import  plot_model
+
+#plot_model(
+    #model,
+    #to_file="model.png",
+    #show_shapes=True,
+    #show_layer_names=True,
+    #rankdir="TB",
+    #expand_nested=True,
+    #dpi=100,
+#)
+
+import tensorflow as tf
+optimiser=tf.keras.optimizers.Adam(
+    learning_rate=lr_schedule(0),
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-07,
+    amsgrad=True,
+    name="Adam"
+)
+
+
+# Compile model
+#model.compile(optimizer = 'adam', loss = 'binary_crossentropy',
+              #metrics = [ jacard, dice_coef, 'accuracy'])
+
+# model.compile(optimizer =optimiser , loss = dice_coef_loss, metrics = [jacard, IOU, dice_coef])
+
+
+
+model.compile(optimizer = 'adam', loss = BinaryFocalLoss(gamma = 2) ,
+             metrics = [ tf.keras.metrics.Recall(),tf.keras.metrics.Precision(), jacard, dice_coef, 'accuracy', IOU])
+
+
+#model.compile(optimizer = 'adam', loss = 'binary_crossentropy' ,
+               #metrics = [ tf.keras.metrics.Recall(),tf.keras.metrics.Precision(), jacard, dice_coef, 'accuracy', IOU])
+
+
+epochs = 50
+
+history = model.fit(X_train, Y_train,
+                batch_size=5,
+                epochs=epochs,
+                validation_data=(X_test, Y_test),
+                callbacks=[ reduce_lr, checkpointer],
+                shuffle=True)
+
+print(history.history.keys())
+
+
+
+train_loss=history.history['loss']
+val_loss=history.history['val_loss']
+train_jac=history.history['accuracy']
+val_jac=history.history['val_accuracy']
+xc=range(50)
+import numpy as np, array
+aa = np.asarray(train_loss)
+np.savetxt("train_loss_sharp.csv", aa, delimiter=",")
+bb = np.asarray(val_loss)
+np.savetxt("val_loss_sharp.csv", bb, delimiter=",")
+cc = np.asarray(train_jac)
+np.savetxt("train_acc_sharp.csv", cc, delimiter=",")
+dd = np.asarray(val_jac)
+np.savetxt("val_acc_sharp.csv", dd, delimiter=",")
+
+plt.figure(1,figsize=(7,5))
+plt.plot(xc,train_loss)
+plt.plot(xc,val_loss)
+plt.xlabel('num of Epochs')
+plt.ylabel('loss')
+plt.title('train_loss vs val_loss - SharpUNET')
+plt.grid(True)
+plt.legend(['train','val'])
+plt.style.use(['classic'])
+plt.savefig('lossSharpUNET.png', bbox_inches='tight')
+
+
+plt.figure(2,figsize=(7,5))
+plt.plot(xc,train_jac)
+plt.plot(xc,val_jac)
+plt.xlabel('num of Epochs')
+plt.ylabel('accuracy')
+plt.title('train_acc vs val_acc - SharpUNET')
+plt.grid(True)
+plt.legend(['train','val'],loc=4)
+plt.style.use(['classic'])
+plt.savefig('accuracySharpUNET.png', bbox_inches='tight')
+
+
+#%%
+
+# score = model.evaluate(X_test, Y_test, verbose=0)
+# print('Test Loss:', score[0])
+# print('Test accuracy:', score[1])
+
+# test_image = X_test[0:1]
+# print (test_image.shape)
+
+# print(model.predict(test_image))
+# #print(model.predict_classes(test_image))
+# print(Y_test[0:1])
+
+
+
+# #%%
+# #%%
+
+	 
+# from sklearn.metrics import classification_report,confusion_matrix
+# import itertools
+
+# Y_pred = model.predict(X_test)
+# print(Y_pred)
+# y_pred_new = np.argmax(Y_pred, axis=1)
+# print(y_pred_new)
+# #y_pred = model.predict_classes(X_test)
+# #print(y_pred)
+# target_names = ['class0(Tumer)','class1(Non_Tumer)']
+# #arget_names = ['class 0(cats)', 'class 1(Dogs)']
+ 					
+# print(classification_report(np.argmax(Y_test,axis=1), y_pred_new,target_names=target_names))
+
+# print(confusion_matrix(np.argmax(Y_test,axis=1), y_pred_new))
+
+
+# # Plotting the confusion matrix
+# def plot_confusion_matrix(cm, classes,
+#                           normalize=False,
+#                           title='Confusion matrix',
+#                           cmap=plt.cm.Blues):
+#     """
+#     This function prints and plots the confusion matrix.
+#     Normalization can be applied by setting `normalize=True`.
+#     """
+#     plt.imshow(cm, interpolation='nearest', cmap=cmap)
+#     plt.title(title)
+#     plt.colorbar()
+#     tick_marks = np.arange(len(classes))
+#     plt.xticks(tick_marks, classes, rotation=45)
+#     plt.yticks(tick_marks, classes)
+
+#     if normalize:
+#         cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+#         print("Normalized confusion matrix")
+#     else:
+#         print('Confusion matrix, without normalization')
+
+#     print(cm)
+
+#     thresh = cm.max() / 2.
+#     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+#         plt.text(j, i, cm[i, j],
+#                  horizontalalignment="center",
+#                  color="white" if cm[i, j] > thresh else "black")
+
+#     plt.tight_layout()
+#     plt.ylabel('True label')
+#     plt.xlabel('Predicted label')
+
+# # Compute confusion matrix
+# cnf_matrix = (confusion_matrix(np.argmax(Y_test,axis=1), y_pred))
+
+# np.set_printoptions(precision=2)
+
+# plt.figure()
+
+# # Plot non-normalized confusion matrix
+# plot_confusion_matrix(cnf_matrix, classes=target_names,
+#                       title='Confusion matrix')
+# #plt.figure()
+# # Plot normalized confusion matrix
+# #plot_confusion_matrix(cnf_matrix, classes=target_names, normalize=True,
+# #                      title='Normalized confusion matrix')
+# #plt.figure()
+# plt.show()
+# #%%
+
+
+class TumerAnalyse(object):
+    def __init__(self, predict_image_file):
+        # load
+        img = imageio.imread(predict_image_file, pilmode='L')
+        img_size = img.size
+        self.img = img
+
+        # binary
+        img_bnr = (img > 0).astype(np.uint8)
+
+        # opening and closing
+        img_bnr = ndi.morphology.binary_closing(img_bnr)
+        img_bnr = ndi.morphology.binary_opening(img_bnr)
+
+        self.img_bnr = img_bnr
+
+        # segmentation
+        img_labels, num_labels = ndi.label(img_bnr)
+        # background label = 0
+        labels = range(1, num_labels + 1)
+        sizes = ndi.sum(img_bnr, img_labels, labels)
+
+        # argsort according to size descend
+        order = np.argsort(sizes)[::-1]
+        labels = [labels[i] for i in order]
+        # print(len (labels))
+        
+        total_number_of_labels = len (labels)
+
+        img_sgt = img_labels / np.max(labels)
+        self.img_sgt = img_sgt
+
+        tumer_lens = []
+        tumer_max_wids = []
+        img_skl = np.zeros_like(self.img, dtype=np.float32)
+        
+        all_tumer_image = []
+        merged_tumer_image = []
+
+        tumer_max_len_flag = 5000
+
+        # skeletonize - median
+        for label in labels:
+            mask = img_labels == label
+            # save the steps for analyse
+            imageio.imsave(str(label) + '.png', mask / (num_labels + 1))
+
+            median_axis, median_dist = morphology.medial_axis(img_sgt, mask, return_distance=True)
+            
+            tumer_len = np.sum(median_axis)
+            tumer_max_len = np.max(tumer_len)
+            tumer_max_wid = np.max(median_dist)
+            
+            
+            
+            thresh = threshold_otsu(mask)
+            binary = mask > thresh
+            RGB = np.zeros((binary.shape[0],binary.shape[1],3), dtype=np.uint8)
+            RGB[binary]  = [255,0,0]
+            
+            RGBO = np.zeros((binary.shape[0],binary.shape[1],3), dtype=np.uint8)
+            RGBO[binary]  = [0, 0, 255]
+            
+            RGBG = np.zeros((binary.shape[0],binary.shape[1],3), dtype=np.uint8)
+            RGBG[binary]  = [0,255,0]
+            
+            if tumer_max_wid > 10:
+                TumerImage = Image.fromarray(RGB)
+
+            elif 5 <tumer_max_wid <= 10:
+                TumerImage = Image.fromarray(RGBO)
+
+            elif 0 <tumer_max_wid <= 5:
+                TumerImage = Image.fromarray(RGBG)
+
+            else:
+                TumerImage = binary
+            
+            
+            
+            all_tumer_image.append(TumerImage)
+            
+
+            img_mph = median_axis * median_dist
+
+            tumer_lens.append(tumer_len)
+        
+            tumer_max_wids.append(tumer_max_wid)
+            img_skl += img_mph
+        
+
+        cols = 3
+        rows = 2
+        # print(rows)
+        for i in range(0, len(all_tumer_image), rows*cols):
+            fig = plt.figure(figsize = (20,15))
+            plt.axis('off')
+            for j in range(0, rows*cols):
+                fig.add_subplot(rows, cols, j+1)
+                plt.axis('off')
+                try:
+                    # print(tumer_max_wids[j])
+                    # print("tumer image: ", all_tumer_image[i+j])
+                    TumerMergedImage = asarray( all_tumer_image[i+j]) 
+
+                    # print("tumer array: ", TumerMergedImage)     
+
+                    merged_tumer_image= np.resize(merged_tumer_image,TumerMergedImage.shape)
+                    # print("merged tumer array: ", merged_tumer_image)     
+
+
+                    merged_tumer_image = merged_tumer_image + TumerMergedImage
+                    # print("Merged tumer: ", merged_tumer_image)
+                            
+                    if tumer_max_wids[j] > 10:
+                        plt.imshow(all_tumer_image[i+j])
+                        plt.axis('off')
+                        plt.text(20, -64, 'Tumer max width: '+str(round(tumer_max_wids[j],4))+' px', bbox=dict(fill=False, edgecolor='blue', linewidth=2))
+                        plt.text(20, -24, 'Need to be repaired', bbox=dict(boxstyle='round',fill=False, edgecolor='#FF0000', linewidth=2))
+                        # plt.imsave('tumer_picture_'+str(i+j)+'.png', all_tumer_image[i+j])
+                        # plt.savefig('tumer_picture_'+str(i+j)+'.png', bbox_inches='tight')
+
+
+
+                    elif 5 <tumer_max_wids[j] <= 10:
+                        plt.imshow(all_tumer_image[i+j])
+                        plt.axis('off')
+                        plt.text(20, -64, 'Tumer max width: '+str(round(tumer_max_wids[j],4))+' px', bbox=dict(fill=False, edgecolor='blue', linewidth=2))
+                        plt.text(20, -24, 'Medium tumer', bbox=dict(boxstyle='round',fill=False, edgecolor='#0000FF', linewidth=2))
+                        # plt.imsave('tumer_picture_'+str(i+j)+'.png', all_tumer_image[i+j])
+                        # plt.savefig('tumer_picture_'+str(i+j)+'.png', bbox_inches='tight')
+
+
+
+                    elif 0 <tumer_max_wids[j] <= 5:
+                        plt.imshow(all_tumer_image[i+j])
+                        plt.axis('off')
+                        plt.text(20, -64, 'Tumer max width: '+str(round(tumer_max_wids[j],4))+' px', bbox=dict(fill=False, edgecolor='blue', linewidth=2))
+                        plt.text(20, -24, 'Hairline tumer', bbox=dict(boxstyle='round',fill=False, edgecolor='#00FF00', linewidth=2))
+                        # plt.imsave('tumer_picture_'+str(i+j)+'.png', all_tumer_image[i+j])
+                        # plt.savefig('tumer_picture_'+str(i+j)+'.png', bbox_inches='tight')
+
+                except:
+                    plt.axis('off')
+                    print("An exception occurred")
+                
+        figMerge = plt.figure(figsize = (10,5))
+        plt.axis('off')
+        plt.imshow(merged_tumer_image)
+        plt.text(20, -88, 'Need to be repaired', bbox=dict(facecolor='#FF0000',boxstyle='round', fill=False, edgecolor='#FF0000', linewidth=2))
+        plt.text(20, -56, 'Medium tumer', bbox=dict(facecolor='#0000FF',boxstyle='round',fill=False, edgecolor='#0000FF', linewidth=2))
+        plt.text(20, -24, 'Hairline tumer', bbox=dict(facecolor='#00FF00',boxstyle='round', fill=False, edgecolor='#00FF00', linewidth=2))
+
+        plt.show()      
+        # plt.imsave('merged_tumer_picture.png', merged_tumer_image)
+        plt.savefig('merged_tumer_picture_'+str(mergeitem)+'.png', bbox_inches='tight')
+            
+        coordinates = peak_local_max(img_skl, min_distance=0)
+        
+        
+        # print(coordinates)
+        self.coordinates = coordinates
+        
+        self.img_mph = img_mph
+        self.img_skl = img_skl
+        self.tumer_lens = np.array(tumer_lens)
+        self.tumer_max_wids = np.array(tumer_max_wids)
+        self.ratio = np.sum(img_bnr) / img_size
+    
+    def get_coordinates(self):
+        return self.coordinates
+
+    def get_prediction(self):
+        return self.img
+
+    def get_segmentation(self):
+        return self.img_sgt
+    
+    def get_skeleton(self):
+        return ndi.grey_dilation(self.img_skl, size=2)
+
+    def get_median(self):
+        return ndi.grey_dilation(self.img_mph, size=2)
+
+    def get_tumer_lens(self):
+        return self.tumer_lens
+
+    def get_tumer_wids(self):
+        return self.tumer_max_wids
+
+    def get_tumer_length(self):
+        return np.sum(self.tumer_lens)
+
+    def get_tumer_max_width(self):
+        return np.max(self.tumer_max_wids)
+
+    def get_tumer_mean_width(self):
+        return np.sum(self.img_bnr) / np.sum(self.tumer_lens)
+
+    def get_ratio(self):
+        return self.ratio
+
+class Edge_Detector(object):
+    def __init__(self, original_image):
+        img_gray = color.rgb2gray(original_image)
+        self.img_gray = img_gray
+
+    def get_edges(self, detector='sobel'):
+        if detector == 'sobel':
+            img = filters.sobel(self.img_gray)
+        elif detector == 'canny1':
+            img = feature.canny(self.img_gray, sigma=1)
+        elif detector == 'canny3':
+            img = feature.canny(self.img_gray, sigma=3)
+        elif detector == 'scharr':
+            img = filters.scharr(self.img_gray)
+        elif detector == 'prewitt':
+            img = filters.prewitt(self.img_gray)
+        elif detector == 'roberts':
+            img = filters.roberts(self.img_gray)
+        return img
+
+def Hilditch_skeleton(binary_image):
+    size = binary_image.size
+    skel = np.zeros(binary_image.shape, np.uint8)
+
+    elem = np.array([[0, 1, 0],
+                     [1, 1, 1],
+                     [0, 1, 0]])
+
+    image = binary_image.copy()
+    for _ in range(10000):
+        eroded = ndi.binary_erosion(image, elem)
+        temp = ndi.binary_dilation(eroded, elem)
+        temp = image - temp
+        skel = np.bitwise_or(skel, temp)
+        image = eroded.copy()
+
+        zeros = size - np.sum(image > 0)
+        if zeros == size:
+            break
+
+    return skel
+
+
+#%%
+
+# Evaluate trained model using Jaccard and Dice metric
+yp = None
+yp = model.predict(x=X_test, batch_size=5, verbose=0)
+#Round off boolean masks
+yp = np.round(yp,0) 
+
+jacard = 0
+dice = 0
+
+
+for i in range(len(Y_test)):
+    yp_2 = yp[i].ravel()
+    y2 = Y_test[i].ravel()
+    intersection = yp_2 * y2
+    union = yp_2 + y2 - intersection
+    jacard += (np.sum(intersection)/np.sum(union))  
+    dice += (2. * np.sum(intersection) ) / (np.sum(yp_2) + np.sum(y2))
+
+jacard /= len(Y_test)
+dice /= len(Y_test)
+
+print('Jacard Index : '+str(jacard))
+print('Dice Coefficient : '+str(dice))
+
+
+for i in range(10):
+    plt.figure(figsize=(20,10))
+    plt.subplot(1,3,1)
+    if len(X_test[i].shape) >= 2:
+        plt.grid(False)
+        plt.imshow(X_test[i].squeeze(), cmap='gray') # 1-channel image
+    else:
+        plt.grid(False)
+        plt.imshow(X_test[i]) # 3-channel
+        
+    plt.title('Input')
+    plt.subplot(1,3,2)
+    plt.grid(False)
+    plt.imshow(Y_test[i].reshape(Y_test[i].shape[0],Y_test[i].shape[1]), cmap='magma') #cmap='magma'
+    plt.title('Ground Truth')
+    plt.subplot(1,3,3)
+    plt.grid(False)
+    plt.imshow(yp[i].reshape(yp[i].shape[0],yp[i].shape[1]),cmap='magma')
+    plt.title('Prediction')
+    
+    plt.imsave('my_picture_'+str(i)+'.png', yp[i].reshape(yp[i].shape[0],yp[i].shape[1]), cmap = plt.cm.gray)
+    
+    # Calc jaccard index of predictions
+    intersection = yp[i].ravel() * Y_test[i].ravel()
+    union = yp[i].ravel() + Y_test[i].ravel() - intersection
+    jacard = (np.sum(intersection)/np.sum(union))  
+    
+    plt.suptitle('Jacard Index: '+ str(np.sum(intersection)) +'/'+ str(np.sum(union)) +' = '+str(jacard))
+    plt.show()
+    plt.savefig('Input_GT_Predict'+str(i)+'.png', bbox_inches='tight')
+
+    plt.close()
+    
+    
+    try:
+        analyser = TumerAnalyse('/projects/BRAIN_TUMER_SEGMENTATION/TCGA/source/my_picture_'+str(i)+'.png')
+        mergeitem = mergeitem + 1
+        # analyser = TumerAnalyse('D:/Swavaf/Tumer Width Samples/TumerWidthDetection/Width/a_5_48.png')
+        tumer_skeleton = analyser.get_skeleton()
+        tumer_lenth = analyser.get_tumer_length()
+        tumer_max_width = analyser.get_tumer_max_width()
+        tumer_mean_width = analyser.get_tumer_mean_width()
+
+
+        tumer_prediction = analyser.get_prediction()
+        tumer_segmentation = analyser.get_segmentation()
+        tumer_lens = analyser.get_tumer_lens()
+        tumer_wids = analyser.get_tumer_wids()
+
+        tumer_ratio = analyser.get_ratio()
+
+        tumer_coordinates = analyser.get_coordinates()
+
+
+        plt.figure(figsize=(10,5))
+
+
+        plt.subplot(1,3,1)
+        plt.imshow(tumer_prediction, cmap='magma') #cmap='magma'
+        plt.title('tumer_prediction')
+        plt.subplot(1,3,2)
+        plt.grid(False)
+        plt.imshow(tumer_segmentation, cmap='magma') #cmap='magma'
+        plt.title('tumer_segmentation')
+        plt.subplot(1,3,3)
+        plt.grid(False)
+        plt.imshow(tumer_skeleton,cmap='magma')
+        plt.title('tumer_skeleton')
+
+        plt.suptitle('Tumer total length: '+str(round(tumer_lenth,4))+' px' +'\nTumer max width: '+str(round(tumer_max_width,4))+' px' +'\nTumer mean width: '+str(round(tumer_mean_width,4))+' px')
+
+        plt.show()
+        plt.savefig('tumer_pre_seg_skl_'+str(i)+'.png', bbox_inches='tight')
+        plt.close()
+
+        plt.figure(figsize=(10,5))
+
+        plt.imshow(tumer_prediction, cmap='magma') #cmap='magma'
+        plt.text(10, -60, 'Tumer max width: '+str(round(tumer_max_width,4))+' px', bbox=dict(fill=False, edgecolor='white', linewidth=2))
+        plt.text(10, -100, 'Tumer mean width: '+str(round(tumer_mean_width,4))+' px', bbox=dict(fill=False, edgecolor='white', linewidth=2))
+        plt.text(10, -20, 'Tumer total length: '+str(round(tumer_lenth,4))+' px', bbox=dict(fill=False, edgecolor='white', linewidth=2))
+        plt.plot(tumer_coordinates[:, 1], tumer_coordinates[:, 0], 'r.')
+
+        plt.show()
+        # plt.imsave('Tumer_details'+str(i+j)+'.png', tumer_prediction)
+        plt.savefig('Tumer_details_'+str(i)+'.png', bbox_inches='tight')
+
+        plt.close()
+    except:
+        print("No tumer reported")
+
+
+#%%
+
+
+
+
+    
+
